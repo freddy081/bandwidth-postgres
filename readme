@@ -59,7 +59,7 @@ crontab -e
 
 Add this line to run the script at minute 0 every hour:
 
-0 * * * * /bin/bash /home/test/fortigate/run_bandwidth.sh >> /home/test/fortigate/bandwidth.log 2>&1
+0 * * * * /bin/bash /home/test/run_bandwidth.sh >> /home/test/bandwidth.log 2>&1
 
 This will log output and errors to bandwidth.log.
 
