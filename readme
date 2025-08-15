@@ -1,0 +1,74 @@
+# FortiGate Bandwidth Monitoring with Ansible
+
+This guide helps you securely manage API credentials, run your Ansible playbook without typing the vault password every time, and automate it to run every hour using cron.
+
+
+## 1. Secure Your Credentials with Ansible Vault
+
+Create an encrypted file to store sensitive data like API keys:
+
+ansible-vault create <filename>.yml
+
+You will be prompted to enter a password twice. This password encrypts your file and is required to decrypt it later.
+
+
+## 2. Avoid Entering Vault Password Every Time
+
+Instead of typing the vault password on each run, create a password file:
+
+echo 'YourVaultPasswordHere' > ~/.vault_pass.txt  
+chmod 600 ~/.vault_pass.txt
+
+Replace 'YourVaultPasswordHere' with your actual vault password.
+
+Configure Ansible to use the password file automatically by creating or editing ansible.cfg in your project folder or home directory (~/.ansible.cfg) and adding:
+
+[defaults]  
+vault_password_file = ~/.vault_pass.txt
+
+
+## 3. Run Your Playbook Without Password Prompt
+
+Run your playbook like this:
+
+ansible-playbook -i inventory.ini bandwidth.yml --vault-password-file /home/test/.vault_pass.txt
+
+Ansible will use the password file to decrypt your secrets automatically.
+
+
+## 4. Automate Playbook Execution Every Hour with Cron
+
+Step 1: Create a run script:
+
+nano run_bandwidth.sh
+
+Paste this content:
+
+#!/bin/bash  
+ansible-playbook -i /home/test/fortigate/inventory.ini /home/test/fortigate/bandwidth.yml --vault-password-file /home/test/.vault_pass.txt
+
+NB: this is my linux path, make sure to use your path as the part above.
+Save and exit (Ctrl+O, Enter, Ctrl+X).  
+Make the script executable:
+
+chmod +x ~/fortigate/run_bandwidth.sh
+
+Step 2: Schedule the script with cron:
+
+crontab -e
+
+Add this line to run the script at minute 0 every hour:
+
+0 * * * * /bin/bash /home/test/fortigate/run_bandwidth.sh >> /home/test/fortigate/bandwidth.log 2>&1
+
+This will log output and errors to bandwidth.log.
+
+## Summary
+
+- Use Ansible Vault to protect sensitive files.  
+- Store your vault password in a file to avoid repeated prompts.  
+- Create a simple script to run your playbook.  
+- Use cron to automate hourly execution.
+
+If you have questions or want to customize this setup, just ask!
+

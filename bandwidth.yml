@@ -1,0 +1,89 @@
+---
+- name: Monitor FortiGate bandwidth in real time and send to Telegram
+  hosts: localhost
+  gather_facts: no
+  vars_files:
+    - secrets.yml   # contains fortigate_api_key, telegram_bot_token, telegram_chat_id
+  vars:
+    fortigate_host: "172.16.x.x"
+    poll_interval: 30
+    interfaces:
+      - wan1
+      - wan2
+    interface_labels:
+      wan1: "Telecel"
+      wan2: "MainOne"
+
+  tasks:
+    - name: First poll - get initial interface stats
+      uri:
+        url: "https://{{ fortigate_host }}/api/v2/monitor/system/interface?interface_name={{ item }}&access_token={{ fortigate_api_key }}"
+        method: GET
+        validate_certs: no
+      register: first_poll
+      loop: "{{ interfaces }}"
+
+    - name: Wait for {{ poll_interval }} seconds
+      pause:
+        seconds: "{{ poll_interval }}"
+
+    - name: Second poll - get interface stats again
+      uri:
+        url: "https://{{ fortigate_host }}/api/v2/monitor/system/interface?interface_name={{ item }}&access_token={{ fortigate_api_key }}"
+        method: GET
+        validate_certs: no
+      register: second_poll
+      loop: "{{ interfaces }}"
+
+    - name: Generate formatted bandwidth report lines
+      set_fact:
+        report_lines: "{{ report_lines | default([]) + [ '🌐 %s → ⬇ %.2f Mbps ⬆ %.2f Mbps' | format(interface_labels[item],
+          (
+            (
+              (second_poll.results[idx].json.results[item].rx_bytes | int) -
+              (first_poll.results[idx].json.results[item].rx_bytes | int)
+            ) * 8 / poll_interval
+          ) / 1048576,
+          (
+            (
+              (second_poll.results[idx].json.results[item].tx_bytes | int) -
+              (first_poll.results[idx].json.results[item].tx_bytes | int)
+            ) * 8 / poll_interval
+          ) / 1048576
+        ) ] }}"
+      loop: "{{ interfaces }}"
+      loop_control:
+        index_var: idx
+
+    - name: Get current timestamp formatted
+      command: date "+%Y-%m-%d %H:%M"
+      register: current_time
+      changed_when: false
+
+    - name: Combine full report message
+      set_fact:
+        full_report: |
+          📡 FortiGate Bandwidth Report ({{ current_time.stdout }})
+          {{ report_lines | join('\n') }}
+
+    - name: Print formatted bandwidth report in terminal
+      shell: printf "%b\n" "{{ full_report }}"
+      args:
+        executable: /bin/bash
+
+    - name: Send report to Telegram
+      uri:
+        url: "https://api.telegram.org/bot{{ telegram_bot_token }}/sendMessage"
+        method: POST
+        body_format: json
+        body:
+          chat_id: "{{ telegram_chat_id }}"
+          text: |
+            📡 *FortiGate Bandwidth Report* ({{ current_time.stdout }})
+            {% for line in report_lines %}
+            {{ line }}
+            {% endfor %}
+          parse_mode: "Markdown"
+        headers:
+          Content-Type: "application/json"
+        status_code: 200
