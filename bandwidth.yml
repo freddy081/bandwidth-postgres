@@ -3,9 +3,10 @@
   hosts: localhost
   gather_facts: no
   vars_files:
-    - secrets.yml   # contains fortigate_api_key, telegram_bot_token, telegram_chat_id
+    # This is where Ansible will decrypt and load the variables from secrets.yml
+    - secrets.yml
   vars:
-    fortigate_host: "172.16.x.x"
+    fortigate_host: "172.16.3.1"
     poll_interval: 30
     interfaces:
       - wan1
@@ -13,13 +14,40 @@
     interface_labels:
       wan1: "Telecel"
       wan2: "MainOne"
+    db_host: "localhost" # This can be hardcoded as it is not a secret
+    ansible_python_interpreter: /home/test/bandwidth/venv/bin/python
 
   tasks:
+    # ---------------------------------------------------------------------------------------------------
+    # Task 1: Create the PostgreSQL table if it doesn't already exist.
+    # It uses the db_user, db_password, and db_name variables from secrets.yml.
+    # ---------------------------------------------------------------------------------------------------
+    - name: Create bandwidth_monitor table
+      community.postgresql.postgresql_query:
+        db: "{{ db_name }}"
+        query: |
+          CREATE TABLE IF NOT EXISTS bandwidth_monitor (
+            observed_on TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            link TEXT,
+            upload NUMERIC(10, 2),
+            download NUMERIC(10, 2)
+          );
+        login_host: "{{ db_host }}"
+        login_user: "{{ db_user }}"
+        login_password: "{{ db_password }}"
+      delegate_to: localhost
+      run_once: true
+
+    # ---------------------------------------------------------------------------------------------------
+    # Task 2 & 3: Poll the FortiGate API to get interface statistics at two different times.
+    # It uses the fortigate_api_key variable from secrets.yml.
+    # ---------------------------------------------------------------------------------------------------
     - name: First poll - get initial interface stats
       uri:
         url: "https://{{ fortigate_host }}/api/v2/monitor/system/interface?interface_name={{ item }}&access_token={{ fortigate_api_key }}"
         method: GET
         validate_certs: no
+        return_content: true
       register: first_poll
       loop: "{{ interfaces }}"
 
@@ -32,24 +60,19 @@
         url: "https://{{ fortigate_host }}/api/v2/monitor/system/interface?interface_name={{ item }}&access_token={{ fortigate_api_key }}"
         method: GET
         validate_certs: no
+        return_content: true
       register: second_poll
       loop: "{{ interfaces }}"
 
+    # ---------------------------------------------------------------------------------------------------
+    # Task 4 & 5: Process the data and prepare the report.
+    # The calculations convert the byte differences into Mbps (Megabits per second).
+    # ---------------------------------------------------------------------------------------------------
     - name: Generate formatted bandwidth report lines
       set_fact:
         report_lines: "{{ report_lines | default([]) + [ '🌐 %s → ⬇ %.2f Mbps ⬆ %.2f Mbps' | format(interface_labels[item],
-          (
-            (
-              (second_poll.results[idx].json.results[item].rx_bytes | int) -
-              (first_poll.results[idx].json.results[item].rx_bytes | int)
-            ) * 8 / poll_interval
-          ) / 1048576,
-          (
-            (
-              (second_poll.results[idx].json.results[item].tx_bytes | int) -
-              (first_poll.results[idx].json.results[item].tx_bytes | int)
-            ) * 8 / poll_interval
-          ) / 1048576
+          ((second_poll.results[idx].json.results[item].rx_bytes | int) - (first_poll.results[idx].json.results[item].rx_bytes | int)) * 8 / (1024 * 1024) / poll_interval,
+          ((second_poll.results[idx].json.results[item].tx_bytes | int) - (first_poll.results[idx].json.results[item].tx_bytes | int)) * 8 / (1024 * 1024) / poll_interval
         ) ] }}"
       loop: "{{ interfaces }}"
       loop_control:
@@ -60,6 +83,29 @@
       register: current_time
       changed_when: false
 
+    # ---------------------------------------------------------------------------------------------------
+    # Task 6: Insert the calculated bandwidth data into the PostgreSQL database.
+    # ---------------------------------------------------------------------------------------------------
+    - name: Insert bandwidth data into PostgreSQL
+      community.postgresql.postgresql_query:
+        db: "{{ db_name }}"
+        query: "INSERT INTO bandwidth_monitor (link, upload, download) VALUES (%s, %s, %s);"
+        positional_args:
+          - "{{ interface_labels[item] }}"
+          - "{{ ((second_poll.results[idx].json.results[item].tx_bytes | int) - (first_poll.results[idx].json.results[item].tx_bytes | int)) * 8 / (1024 * 1024) / poll_interval }}"
+          - "{{ ((second_poll.results[idx].json.results[item].rx_bytes | int) - (first_poll.results[idx].json.results[item].rx_bytes | int)) * 8 / (1024 * 1024) / poll_interval }}"
+        login_host: "{{ db_host }}"
+        login_user: "{{ db_user }}"
+        login_password: "{{ db_password }}"
+      loop: "{{ interfaces }}"
+      loop_control:
+        index_var: idx
+      delegate_to: localhost
+
+    # ---------------------------------------------------------------------------------------------------
+    # Task 7 & 8: Display the report and send to Telegram.
+    # This task uses the telegram_bot_token and telegram_chat_id from secrets.yml.
+    # ---------------------------------------------------------------------------------------------------
     - name: Combine full report message
       set_fact:
         full_report: |
