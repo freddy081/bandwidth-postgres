@@ -6,7 +6,7 @@
     # This is where Ansible will decrypt and load the variables from secrets.yml
     - secrets.yml
   vars:
-    fortigate_host: "172.16.3.1"
+    fortigate_host: "172.16.x.x"
     poll_interval: 30
     interfaces:
       - wan1
