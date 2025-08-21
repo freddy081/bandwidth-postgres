@@ -1,3 +1,12 @@
+Structure 
+.
+├── bandwidth.yml          # The main Ansible playbook file.
+├── docker-compose.yml     # Defines and runs the application's services using Docker.
+├── inventory.ini          # Specifies the hosts that the playbook will run against.
+├── readme                 # A file that provides a description and instructions for the project.
+├── run_bandwidth.sh       # A shell script to automate the execution of the Ansible playbook.
+└── secrets.yml            # An encrypted file containing sensitive credentials and variables.
+
 # FortiGate Bandwidth Monitoring with Ansible
 
 This guide helps you securely manage API credentials, run your Ansible playbook without typing the vault password every time, and automate it to run every hour using cron.
